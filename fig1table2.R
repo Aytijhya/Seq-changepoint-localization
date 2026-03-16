@@ -112,30 +112,56 @@ summary_tab <- table_results %>% group_by(T) %>%
             Size_Univ = mean(Univ_Size), Size_Adapt = mean(Adapt_Size), Delay = mean(Delay))
 print(summary_tab)
 
-# Figure 1 Plot [cite: 546]
+# Figure 1 Plot 
+
 p=ggplot(viz_results100, aes(x = Time, y = Data)) +
-  geom_point(size = 0.6) +
+  geom_point(size = 1) +
   geom_vline(xintercept = 100, color = "black", size = 1) + # True T
   geom_point(data = subset(viz_results100, In_CI), aes(x = Time, y = 0), color = "red", shape = 16, size = 1.5) +
   facet_wrap(~Run, ncol = 1, scales = "fixed") +
   theme_minimal() +
   theme(panel.grid.minor = element_blank(), strip.text = element_blank()) +
   labs(title = "",
-       x = "Time", y = "Data")
+       x = "Time", y = "Data")+
+  theme_minimal() +
+  xlim(0, 130) +            # Set x-axis limits
+  scale_x_continuous(breaks = seq(0, 130, by = 10), 
+                     minor_breaks = seq(0, 130, by = 2)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    strip.text = element_blank(),  # Remove facet labels
+    strip.background = element_blank()   # Customize facet label size if desired
+  )
 ggsave("fig1a.png", plot = p, width = 8, height = 5, dpi = 300)
 
 
-# Figure 1 Plot [cite: 546]
+
+
+
+
 p=ggplot(viz_results500, aes(x = Time, y = Data)) +
-  geom_point(size = 0.6) +
+  geom_point(size = 1) +
   geom_vline(xintercept = 500, color = "black", size = 1) + # True T
   geom_point(data = subset(viz_results500, In_CI), aes(x = Time, y = 0), color = "red", shape = 16, size = 1.5) +
   facet_wrap(~Run, ncol = 1, scales = "fixed") +
   theme_minimal() +
   theme(panel.grid.minor = element_blank(), strip.text = element_blank()) +
   labs(title = "",
-       x = "Time", y = "Data")
+       x = "Time", y = "Data")+
+  theme_minimal() +
+  xlim(0, 530) +            # Set x-axis limits
+  scale_x_continuous(breaks = seq(0, 530, by = 50), 
+                     minor_breaks = seq(0, 530, by = 5)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    strip.text = element_blank(),  # Remove facet labels
+    strip.background = element_blank()   # Customize facet label size if desired
+  )
 ggsave("fig1b.png", plot = p, width = 8, height = 5, dpi = 300)
+
+
 
 
 

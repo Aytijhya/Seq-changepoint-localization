@@ -153,12 +153,26 @@ cat("\nGenerating Figure 2(a) runs...\n")
 plot_data <- run_setting2_expt(100, 0.9, 0.1, 0.1, 0, 5, is_viz = TRUE)
 
 p=ggplot(plot_data, aes(x = Time, y = Data)) +
-  geom_point(size = 0.6) +
+  geom_point(size = 1) +
   geom_vline(xintercept = 100, color = "black", size = 1) + # True T
   geom_point(data = subset(plot_data, In_CI), aes(x = Time, y = 0), color = "red", shape = 16, size = 1.5) +
   facet_wrap(~Run, ncol = 1, scales = "fixed") +
   theme_minimal() +
   theme(panel.grid.minor = element_blank(), strip.text = element_blank()) +
   labs(title = "",
-       x = "Time", y = "Data")
+       x = "Time", y = "Data")+
+  theme_minimal() +
+  xlim(0, 130) +            # Set x-axis limits
+  scale_x_continuous(breaks = seq(0, 130, by = 10), 
+                     minor_breaks = seq(0, 130, by = 2)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    strip.text = element_blank(),  # Remove facet labels
+    strip.background = element_blank()   # Customize facet label size if desired
+  )
 ggsave("fig2a.png", plot = p, width = 8, height = 5, dpi = 300)
+
+
+
+
