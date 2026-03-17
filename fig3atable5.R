@@ -3,139 +3,140 @@ library(dplyr)
 library(foreach)
 library(doParallel)
 
-# --- 1. Parameter Setup ---
+# --- 1. Core Functions ---
 
-alpha <- 0.1
-A <- 1000
-N_sims <- 100
-iterations <- 50
-mu <- 0.25
-
-# Numerically solve for lambda* (Equation: e^l = (1+l(1-mu))/(1-l*mu))
-find_lambda_star <- function(m) {
-  root_fn <- function(l) exp(l) - (1 + l * (1 - m)) / (1 - l * m)
-  uniroot(root_fn, lower = 0.01, upper = 1/m - 0.01)$root
-}
-lambda_star <- find_lambda_star(mu) # Approx 1.705
-
-# --- 2. Core Methodological Functions ---
-
-# Histogram-based p_hat estimator (Predictable plug-in)
-get_p_hat <- function(segment, x_val) {
-  bin_idx <- pmin(pmax(ceiling(x_val * 10), 1), 10)
-  k_counts <- if(length(segment) == 0) 0 else sum(pmin(pmax(ceiling(segment * 10), 1), 10) == bin_idx)
-  # Formula: (1 + sum 1(x in Bk) * sum 1(Xj in Bk)) / (9 + t - i)
-  return((1 + k_counts) / (9 + length(segment)))
-}
-
-# e-detector (Shin et al., 2023) using the recursive logic
-run_e_detector <- function(data, threshold) {
-  n <- length(data)
-  for (i in 1:n) {
-    # Check max log-e-process over all starting points j
-    log_e_vals <- sapply(1:i, function(j) {
-      segment <- data[j:i]
-      # Predictable histogram estimator p_hat'
-      s_log_e <- 0
-      if(length(segment) > 1) {
-        for(k in 2:length(segment)) {
-          p_val <- get_p_hat(segment[1:(k-1)], segment[k])
-          s_log_e <- s_log_e + log(p_val / 0.1) # p0(x) = 1/10
-        }
-      }
-      return(s_log_e)
-    })
-    if (exp(max(log_e_vals)) >= threshold) return(i)
-  }
-  return(NA)
-}
-
-# Universal Mt Statistic for Setting IV (Equation 9)
-calc_Mt_IV <- function(data, t, tau) {
-  if (t > tau) return(-Inf)
-  # Forward t-delay e-process (Numeraire e-variable)
-  fwd_data <- data[t:tau]
-  log_R_t <- max(cumsum(log(1 + lambda_star * (fwd_data - mu))))
-  
-  # Backward t-delay e-process (Predictable plug-in)
-  log_S_t <- 0
-  if (t > 1) {
-    bwd_data <- data[1:(t-1)]
-    log_S_vals <- numeric(t - 1)
-    s_acc <- 0
-    for (i in (t-1):2) {
-      p_val <- get_p_hat(bwd_data[i:(t-1)], bwd_data[i-1])
-      s_acc <- s_acc + log(p_val / 0.1)
-      log_S_vals[i-1] <- s_acc
+# e-detector for Setting IV 
+run_e_detector_V <-function(data, threshold) {
+    S <- 0
+    for (i in seq_along(data)) {
+      if(i==1)
+        mu=0
+      else 
+        mu=min(0,mean(data[1:(i-1)]))
+      lr_inc <- dnorm(data[i], mu, 1, log = TRUE) - dnorm(data[i], 0.75, 1, log = TRUE)
+      S <- max(0, S + lr_inc)
+      if (exp(S) >= threshold) return(i)
     }
-    log_S_t <- max(log_S_vals)
+    return(NA)
+}
+
+calc_Mt_V <- function(data, t, tau) {
+  if (t > tau) return(-Inf)
+  
+  # Forward t-delay e-process (R_n): lambda_i = max(0.75, mean_past) [cite: 187, 614]
+  fwd_data <- data[t:tau]
+  log_R_t <- 0
+  if (length(fwd_data) > 1) {
+    for (i in 2:length(fwd_data)) {
+      lambda_i <- max(0.75, mean(fwd_data[1:(i-1)]))
+      log_R_t <- log_R_t -(-lambda_i * fwd_data[i-1] + lambda_i^2 / 2)
+    }
   }
+  
+  # Backward t-delay e-process (S_n): mu_i = min(0, mean_future) - 0.75 [cite: 188, 614]
+  log_S_t <- 0
+  if (t > 2) { # Ensure segment is long enough for predictable plug-in
+    bwd_data <- data[1:(t-1)]
+    s_vals <- c(0)
+    s_acc <- 0
+    # Predictable mu_i requires at least one data point to the 'right'
+    for (i in (t-1):2) {
+      mu_i <- min(0, mean(bwd_data[i:(t-1)])) 
+      s_acc <- s_acc + (-(0.75-mu_i) * bwd_data[i-1] + (0.25-mu_i^2) / 2)
+      s_vals <- c(s_vals, s_acc)
+    }
+    log_S_t <- max(s_vals)
+  }
+  
   return(exp(max(log_R_t, log_S_t)))
 }
 
-# --- 3. Experiment Runner ---
+# --- 2. Simulation Runner ---
 
-run_setting4_full <- function(true_T, d_type, is_viz = FALSE) {
-  # True post-change density f1(x)
-  p1_data <- if(d_type == "beta") rbeta(600, 1, 4) else 
-    sample(c(runif(480, 0, 0.2), runif(120, 0.2, 1)))
+
+run_setting5_combined <- function(true_T, iterations, is_viz = FALSE) {
+  alpha <- 0.1
+  A <- 100
+  N_sims <- 100
   
-  obs <- c(runif(true_T - 1, 0, 1), p1_data)
-  tau <- run_e_detector(obs, A)
+  cl <- makeCluster(parallel::detectCores() - 1)
+  registerDoParallel(cl)
   
-  if (is.na(tau) || tau < true_T) return(NULL) # Conditional on tau >= T
+  results <- tryCatch({
+    # CRITICAL: Exporting functions to workers via .export 
+    foreach(i = 1:iterations, .combine = rbind, 
+            .packages = c("stats", "dplyr"),
+            .export = c("run_e_detector_V", "calc_Mt_V")) %dopar% {
+              
+              # True Data: N(1,1) -> U[-1.2, 0.8] [cite: 605]
+              obs <- c(rnorm(true_T - 1, 1, 1), runif(300, -1.2, 0.8))
+              tau <- run_e_detector_V(obs, A)
+              print(tau)
+              if (is.na(tau) || tau < true_T) return(NULL) # Conditional on tau >= T [cite: 63]
+              
+              data_tau <- obs[1:tau]
+              
+              # Estimate rt* using P0* = N(0.75, 1) (Assumption 1) [cite: 613]
+              null_stops <- replicate(N_sims, {
+                s <- run_e_detector_V(rnorm(tau + 1, 0.75, 1), A)
+                if(is.na(s)) tau + 1 else s
+              })
+              
+              in_ci <- logical(tau)
+              for (t in 1:tau) {
+                rt_star <- (1 + sum(null_stops >= t)) / (N_sims + 1)
+                mt <- calc_Mt_V(data_tau, t, tau)
+                # Universal threshold check [cite: 271]
+                if (mt < 2 / (alpha * rt_star)) in_ci[t] <- TRUE
+              }
+              
+              if (is_viz) {
+                return(data.frame(Time = 1:tau, Data = data_tau, In_CI = in_ci, Run = i))
+              } else {
+                return(data.frame(T = true_T, Delay = tau - true_T, Size = sum(in_ci),
+                                  Covered = (true_T %in% which(in_ci))))
+              }
+            }
+  }, finally = { stopCluster(cl) })
   
-  data_tau <- obs[1:tau]
-  null_stops <- replicate(N_sims, {
-    s <- run_e_detector(runif(tau + 200, 0, 1), A)
-    if(is.na(s)) tau + 200 else s
-  })
-  
-  in_ci <- logical(tau)
-  for (t in 1:tau) {
-    rt <- (1 + sum(null_stops >= t)) / (N_sims + 1)
-    mt <- calc_Mt_IV(data_tau, t, tau)
-    if (mt < 2 / (alpha * rt)) in_ci[t] <- TRUE
-  }
-  
-  if (is_viz) {
-    return(data.frame(Time = 1:tau, Data = data_tau, In_CI = in_ci))
-  } else {
-    ci_idx <- which(in_ci)
-    return(data.frame(T = true_T, Delay = tau - true_T, Size = length(ci_idx),
-                      Covered = (true_T %in% ci_idx), Error = abs(median(ci_idx) - true_T)))
-  }
+  return(results)
 }
 
-# --- 4. Execution ---
+# --- 3. Execution ---
 
-cl <- makeCluster(parallel::detectCores() - 1); registerDoParallel(cl)
+# Table 5 Metrics
+cat("Calculating Table 5 metrics...\n")
+table_res <- run_setting5_combined(100, iterations = 500)
+print("--- TABLE 5 (SETTING IV) ---")
+print(table_res %>% summarise(T = 100, Coverage = mean(Covered), Size = mean(Size), Delay = mean(Delay)))
 
-# Table 5 Metrics (Row 1: T=100, 4(1-x)^3)
-table_res <- foreach(i = 1:iterations, .combine = rbind, .packages = c("stats", "dplyr"),
-                     .export = c("run_e_detector", "get_p_hat", "calc_Mt_IV", "mu", "lambda_star", "A")) %dopar% {
-                       run_setting4_full(100, "beta")
-                     }
+table_res <- run_setting5_combined(500, iterations = 500)
+print("--- TABLE 5 (SETTING IV) ---")
+print(table_res %>% summarise(T = 500, Coverage = mean(Covered), Size = mean(Size), Delay = mean(Delay)))
 
-# Visualization for Figure 3(a) (5 runs)
-viz_data_list <- list()
-while(length(viz_data_list) < 5) {
-  res <- run_setting4_full(100, "beta", is_viz = TRUE)
-  if(!is.null(res)) viz_data_list[[length(viz_data_list) + 1]] <- res
-}
-stopCluster(cl)
+# Figure 3(a) Plot
+cat("\nGenerating Figure 3(a)...\n")
+viz_runs_3<- run_setting5_combined(100, iterations = 5, is_viz = TRUE)
 
-# --- 5. Output Results ---
+p=ggplot(viz_runs_3, aes(x = Time, y = Data)) +
+  geom_point(size = 1) +
+  geom_vline(xintercept = 100, color = "black", size = 1) + # True T
+  geom_point(data = subset(viz_runs_3, In_CI), aes(x = Time, y = 0), color = "red", shape = 16, size = 1.5) +
+  facet_wrap(~Run, ncol = 1, scales = "fixed") +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank(), strip.text = element_blank()) +
+  labs(title = "",
+       x = "Time", y = "Data")+
+  theme_minimal() +
+  xlim(0, 130) +            # Set x-axis limits
+  scale_x_continuous(breaks = seq(0, 130, by = 10), 
+                     minor_breaks = seq(0, 130, by = 2)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    strip.text = element_blank(),  # Remove facet labels
+    strip.background = element_blank()   # Customize facet label size if desired
+  )
+ggsave("fig3a.png", plot = p, width = 8, height = 5, dpi = 300)
 
-print("--- TABLE 5 (SETTING IV PARTIAL REPRODUCTION) ---")
-print(table_res %>% summarise(T = 100, Coverage = mean(Covered), Size = mean(Size), 
-                              Abs_Dev = mean(Error), Delay = mean(Delay)))
 
-viz_df <- bind_rows(lapply(1:5, function(i) { viz_data_list[[i]]$Run <- paste("Run", i); viz_data_list[[i]] }))
-ggplot(viz_df, aes(x = Time, y = Data)) +
-  geom_point(size = 0.5, alpha = 0.5) +
-  geom_point(data = filter(viz_df, In_CI), color = "red", size = 0.8) +
-  geom_vline(xintercept = 100, color = "black", size = 1) +
-  facet_wrap(~Run, ncol = 1, scales = "free_y") + theme_bw() +
-  labs(title = "Figure 3(a) Reproduction: Setting IV",
-       subtitle = "Red points = Universal Confidence Set (10)")

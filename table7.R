@@ -1,164 +1,155 @@
-library(ggplot2)
 library(dplyr)
 library(foreach)
 library(doParallel)
 
-# --- 1. Core Huber-Robust Functions ---
-
-
-
-# Huber-robust e-detector (Source: Equation 24 and Page 34)
-# Uses the clipped likelihood ratio pi(x) for epsilon-contamination
-run_huber_detector <- function(data, threshold, eps) {
-  # Constants for Huber LFD (approximate for N(0,1) vs N(1,1))
-  # Source: Huber (1965); Saha and Ramdas (2026)
-  lexpt=function(l,eps,mu){
-    if(mu>0)
-      return((l*pnorm(log(l)/mu+mu/2)+1-pnorm(log(l)/mu-mu/2))*(1-eps)-1)
-    else
-      return((l-l*pnorm(log(l)/mu+mu/2)+pnorm(log(l)/mu-mu/2))*(1-eps)-1)
-  }
+# --- 1. Wu (2007) Asymptotic CI (Source: Page 35, Section 6) ---
+get_wu_ci <- function(obs, tau_stop, theta_1, alpha) {
+  Tn <- numeric(tau_stop + 1)
+  for (i in 1:tau_stop) Tn[i+1] <- max(0, Tn[i] + obs[i])
   
-  uexpt=function(u,eps,mu){
-    if(mu>0)
-      return((1/u-pnorm(log(u)/mu-mu/2)/u+pnorm(log(u)/mu+mu/2))*(1-eps)-1)
-    else
-      return((pnorm(log(u)/mu-mu/2)/u+1-
-                pnorm(log(u)/mu+mu/2))*(1-eps)-1)
-  }
+  # Asymptotic constants from Wu (2007)
+  v_hat <- max(which(Tn[1:tau_stop] == 0)) 
+  s_approx <- log(alpha) * (1 / (sqrt(2) * theta_1) + 0.088)
+  c_approx <- -log(1 - sqrt(1 - alpha)) / (2 * theta_1) - 0.583
   
-  c1 <- uniroot(lexpt,eps=eps,mu=1,lower = 0,upper = 1/eps)$root  # lower clipping
-  c2 <- uniroot(uexpt,eps=eps,mu=1,lower = 0.1,upper = 1/eps)$root # upper clipping
+  zeros <- which(Tn[1:v_hat] == 0)
+  s_int <- ceiling(abs(s_approx))
+  Ls <- if(length(zeros) >= s_int) rev(zeros)[s_int] else 1
   
-  e_proc <- 0
-  for (i in seq_along(data)) {
-    # Standard LR for N(1,1) vs N(0,1)
-    lr <- exp(data[i] - 0.5)
-    # Huber clipping (clipped LR pi(x))
-    pi_x <- min(max(lr, c1), c2)
-    
-    # e-detector recursion: e_i = pi_x * max(e_{i-1}, 1)
-    e_proc <- pi_x * max(e_proc, 1)
-    
-    if (e_proc >= threshold) return(i)
-  }
-  return(NA)
+  Vc_indices <- which(Tn[(v_hat + 1):(tau_stop + 1)] <= c_approx) + v_hat
+  return(unique(c(Vc_indices, Ls:(v_hat - 1))))
 }
 
-# Mt Statistic for Setting VI (Source: Equation 14 and Page 34)
-calc_Mt_robust <- function(data, t, tau, eps) {
-  if (t > tau) return(-Inf)
-  lexpt=function(l,eps,mu){
-    if(mu>0)
-      return((l*pnorm(log(l)/mu+mu/2)+1-pnorm(log(l)/mu-mu/2))*(1-eps)-1)
-    else
-      return((l-l*pnorm(log(l)/mu+mu/2)+pnorm(log(l)/mu-mu/2))*(1-eps)-1)
+# --- 2. Corrected Adaptive CI (Source: Algorithm 1 & 2) ---
+run_adaptive_ci <- function(obs, tau_stop, A, theta_1, alpha, N_sims) {
+  # Estimate rt with strict positivity safeguard 
+  null_stops <- replicate(N_sims, {
+    Tn <- 0; i <- 0
+    while(Tn < A && i < (tau_stop + 1)) {
+      i <- i + 1
+      Tn <- max(0, Tn + rnorm(1, -theta_1, 1)) 
+    }
+    i
+  })
+  
+  adapt_set <- c()
+  for (t in 1:tau_stop) {
+    # Strictly positive rt estimator 
+    rt <- (1 + sum(null_stops >= t)) / (N_sims + 1)
+    
+    # Mt calculation (Equation 9) [cite: 201]
+    fwd_data <- obs[t:tau_stop]
+    # Log-space sum to prevent overflow, then exp [cite: 187]
+    log_fwd <- cumsum(-2 * theta_1 * fwd_data)
+    max_fwd <- exp((max(log_fwd)))
+    
+    max_bwd <- 0
+    if (t > 1) {
+      bwd_data <- obs[1:(t-1)]
+      log_bwd <- cumsum(rev(2 * theta_1 * bwd_data))
+      max_bwd <- exp(max(log_bwd))
+    }
+    mt_obs <- max(max_fwd, max_bwd)
+    
+    # Simulation-based quantile [cite: 315]
+    m_t_sims <- replicate(50, {
+      sim_obs <- c(rnorm(t - 1, -theta_1, 1), rnorm(300, theta_1, 1))
+      Tn_sim <- 0; tau_sim <- 0
+      for (k in 1:length(sim_obs)) {
+        Tn_sim <- max(0, Tn_sim + sim_obs[k])
+        if (Tn_sim >= A) { tau_sim <- k; break }
+      }
+      if (tau_sim < t) return(0)
+      
+      sim_seg <- sim_obs[1:tau_sim]
+      s_fwd <- exp(max(cumsum(-2 * theta_1 * sim_seg[t:tau_sim])))
+      s_bwd <- if(t > 1) exp(max(cumsum(rev(2 * theta_1 * sim_seg[1:(t-1)])))) else 0
+      max(s_fwd, s_bwd)
+    })
+    
+    # Avoid NA/NaN in quantile 
+    if (mt_obs <= quantile(c(mt_obs,m_t_sims),  1 - alpha* rt, na.rm = TRUE)) {
+      adapt_set <- c(adapt_set, t)
+    }
   }
-  
-  uexpt=function(u,eps,mu){
-    if(mu>0)
-      return((1/u-pnorm(log(u)/mu-mu/2)/u+pnorm(log(u)/mu+mu/2))*(1-eps)-1)
-    else
-      return((pnorm(log(u)/mu-mu/2)/u+1-
-                pnorm(log(u)/mu+mu/2))*(1-eps)-1)
-  }
-  c1 <- uniroot(lexpt,eps=eps,mu=1,lower = 0,upper = 1/eps)$root  # lower clipping
-  c2 <- uniroot(uexpt,eps=eps,mu=1,lower = 0.1,upper = 1/eps)$root # upper clipping
-  
-  # Forward Segment: Product of clipped LRs
-  fwd_data <- data[t:tau]
-  lr_fwd <- exp(-fwd_data + 0.5)
-  pi_fwd <- pmin(pmax(lr_fwd, c1), c2)
-  R_t <- max(cumprod(pi_fwd))
-  
-  # Backward Segment: Product of clipped inverse LRs
-  if (t > 1) {
-    bwd_data <- data[1:(t-1)]
-    lr_bwd <- exp((bwd_data - 0.5))
-    pi_bwd <- pmin(pmax(lr_bwd, 1/c2), 1/c1)
-    S_t <- max(cumprod(rev(pi_bwd)))
-  } else { S_t <- 0 }
-  
-  return(max(R_t, S_t))
+  return(adapt_set)
 }
 
-# --- 2. Combined Experiment Wrapper ---
-
-run_setting6_combined <- function(true_T, eps, iterations = 200, is_viz = FALSE) {
-  alpha <- 0.1
-  A <- 1000
-  N_sims <- 100
+# --- 3. Parallel Comparison Runner ---
+run_table8_expt <- function(T_true, mu_val, iter = 100) {
+  d <- if(mu_val == 0.25) 8.59 else 7.56 # Thresholds from Page 35
+  mu_pre <- -mu_val
   
   cl <- makeCluster(parallel::detectCores() - 1)
   registerDoParallel(cl)
   
   results <- tryCatch({
-    foreach(i = 1:iterations, .combine = rbind, 
-            .packages = c("stats", "dplyr"),
-            .export = c("run_huber_detector", "calc_Mt_robust")) %dopar% {
+    foreach(i = 1:iter, .combine = rbind, .packages = c("stats", "dplyr"),
+            .export = c("get_wu_ci", "run_adaptive_ci")) %dopar% {
               
-              # Data Generation: epsilon-contamination with Cauchy noise (Source: Page 34)
-              # P0 = (1-eps)N(0,1) + eps*Cauchy(-1,10)
-              # P1 = (1-eps)N(1,1) + eps*Cauchy(-1,10)
-              n_total <- true_T + 200
-              noise <- rcauchy(n_total, -1, 10)
-              is_contam <- runif(n_total) < eps
+              # Generate Setting I Data [cite: 524]
+              obs <- c(rnorm(T_true, mu_pre, 1), rnorm(500, mu_val, 1))
               
-              pre_data <- rnorm(true_T - 1, 0, 1)
-              post_data <- rnorm(200, 1, 1)
-              
-              obs <- c(pre_data, post_data)
-              obs[is_contam] <- noise[is_contam]
-              
-              tau <- run_huber_detector(obs, A, eps)
-              if (is.na(tau) || tau < true_T) return(NULL)
-              
-              data_tau <- obs[1:tau]
-              
-              # rt* Estimation using Monte Carlo from P0 (N(0,1) as proxy for LFD)
-              null_stops <- replicate(N_sims, {
-                s <- run_huber_detector(rnorm(tau + 1, 0, 1), A, eps)
-                if(is.na(s)) tau + 1 else s
-              })
-              
-              in_ci <- logical(tau)
-              for (t in 1:tau) {
-                rt_star <- (1 + sum(null_stops >= t)) / (N_sims + 1)
-                mt <- calc_Mt_robust(data_tau, t, tau, eps)
-                if (mt < 2 / (alpha * rt_star)) in_ci[t] <- TRUE
+              # CUSUM Detector [cite: 670]
+              Tn <- 0; tau <- 0
+              for (k in 1:length(obs)) {
+                Tn <- max(0, Tn + obs[k])
+                if (Tn >= d) { tau <- k; break }
               }
               
-              if (is_viz) {
-                return(data.frame(Time = 1:tau, Data = data_tau, In_CI = in_ci, Run = i))
-              } else {
-                return(data.frame(T = true_T, Eps = eps, Delay = tau - true_T, 
-                                  Size = sum(in_ci), Covered = (true_T %in% which(in_ci)),
-                                  Abs_Dev = abs(median(which(in_ci)) - true_T)))
-              }
+              # Requirement: Conditional on tau >= T 
+              if (tau < T_true) return(NULL) 
+              
+              # Apply both methods to same data
+              wu_ci <- get_wu_ci(obs, tau, mu_val, 0.05)
+              our_ci <- run_adaptive_ci(obs, tau, d, mu_val, 0.05, 100)
+              
+              data.frame(
+                T_val = T_true,
+                Our_Cov = T_true %in% our_ci,
+                Wu_Cov = T_true %in% wu_ci,
+                Our_Size = length(our_ci),
+                Wu_Size = length(wu_ci)
+              )
             }
   }, finally = { stopCluster(cl) })
-  
   return(results)
 }
 
-# --- 3. Execution & Summary ---
+# --- 4. Final Summary ---
+res_100 <- run_table8_expt(100, 0.25, iter = 500)
+print("--- TABLE 8 REPRODUCTION (T=100) ---")
+print(res_100 %>% summarise(
+  Our_Cond_Coverage = mean(Our_Cov), 
+  Wu_Cond_Coverage = mean(Wu_Cov),  
+  Our_Size = mean(Our_Size),        
+  Wu_Size = mean(Wu_Size)            
+))
 
-# Table 7 Reproduction (Source: Page 35)
-cat("Simulating Table 7 (Setting VI)...\n")
-res_100_01 <- run_setting6_combined(100, 0.01, iterations = 500)
-print("--- TABLE 7 PARTIAL REPRODUCTION (T=100, Eps=0.01) ---")
-print(res_100_01 %>% summarise(T=100, Eps=0.01, Coverage=mean(Covered), Size=mean(Size), Delay=mean(Delay)))
+res_500 <- run_table8_expt(500, 0.25, iter = 200)
+print("--- TABLE 8 REPRODUCTION (T=100) ---")
+print(res_500 %>% summarise(
+  Our_Cond_Coverage = mean(Our_Cov), 
+  Wu_Cond_Coverage = mean(Wu_Cov),  
+  Our_Size = mean(Our_Size),        
+  Wu_Size = mean(Wu_Size)            
+))
 
-res_500_01 <- run_setting6_combined(500, 0.01, iterations = 500)
-print("--- TABLE 7 PARTIAL REPRODUCTION (T=500, Eps=0.01) ---")
-print(res_500_01 %>% summarise(T=500, Eps=0.01, Coverage=mean(Covered), Size=mean(Size), Delay=mean(Delay)))
+res_100 <- run_table8_expt(100, 0.3, iter = 200)
+print("--- TABLE 8 REPRODUCTION (T=100) ---")
+print(res_100 %>% summarise(
+  Our_Cond_Coverage = mean(Our_Cov), 
+  Wu_Cond_Coverage = mean(Wu_Cov),  
+  Our_Size = mean(Our_Size),        
+  Wu_Size = mean(Wu_Size)            
+))
 
-res_100_001 <- run_setting6_combined(100, 0.001, iterations = 500)
-print("--- TABLE 7 PARTIAL REPRODUCTION (T=100, Eps=0.001) ---")
-print(res_100_001 %>% summarise(T=100, Eps=0.001, Coverage=mean(Covered), Size=mean(Size), Delay=mean(Delay)))
-
-res_500_001 <- run_setting6_combined(500, 0.001, iterations = 500)
-print("--- TABLE 7 PARTIAL REPRODUCTION (T=500, Eps=0.001) ---")
-print(res_500_001 %>% summarise(T=500, Eps=0.001, Coverage=mean(Covered), Size=mean(Size), Delay=mean(Delay)))
-
+res_500 <- run_table8_expt(500, 0.3, iter = 200)
+print("--- TABLE 8 REPRODUCTION (T=100) ---")
+print(res_500 %>% summarise(
+  Our_Cond_Coverage = mean(Our_Cov), 
+  Wu_Cond_Coverage = mean(Wu_Cov),  
+  Our_Size = mean(Our_Size),        
+  Wu_Size = mean(Wu_Size)            
+))
 
