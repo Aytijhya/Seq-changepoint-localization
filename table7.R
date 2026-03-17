@@ -2,81 +2,50 @@ library(dplyr)
 library(foreach)
 library(doParallel)
 
-# --- 1. Wu (2007) Asymptotic CI (Source: Page 35, Section 6) ---
-get_wu_ci <- function(obs, tau_stop, theta_1, alpha) {
-  Tn <- numeric(tau_stop + 1)
-  for (i in 1:tau_stop) Tn[i+1] <- max(0, Tn[i] + obs[i])
-  
-  # Asymptotic constants from Wu (2007)
-  v_hat <- max(which(Tn[1:tau_stop] == 0)) 
-  s_approx <- log(alpha) * (1 / (sqrt(2) * theta_1) + 0.088)
-  c_approx <- -log(1 - sqrt(1 - alpha)) / (2 * theta_1) - 0.583
-  
-  zeros <- which(Tn[1:v_hat] == 0)
-  s_int <- ceiling(abs(s_approx))
-  Ls <- if(length(zeros) >= s_int) rev(zeros)[s_int] else 1
-  
-  Vc_indices <- which(Tn[(v_hat + 1):(tau_stop + 1)] <= c_approx) + v_hat
-  return(unique(c(Vc_indices, Ls:(v_hat - 1))))
+run_cusum <- function(data, threshold) {
+  Tn <- 0
+  for (i in seq_along(data)) {
+    Tn <- max(0, Tn + data[i])
+    if (Tn >= threshold) return(i)
+  }
+  return(NA)
 }
 
-# --- 2. Corrected Adaptive CI (Source: Algorithm 1 & 2) ---
-run_adaptive_ci <- function(obs, tau_stop, A, theta_1, alpha, N_sims) {
-  # Estimate rt with strict positivity safeguard 
+# Test Statistic Mt (Equation 9) 
+calc_Mt <- function(data, t, tau, mu_val) {
+  if (t > tau) return(-Inf)
+  fwd_data <- data[t:tau]
+  fwd_lrs <- cumsum(dnorm(fwd_data, -mu_val, 1, log = TRUE) - dnorm(fwd_data, mu_val, 1, log = TRUE))
+  R_max <- exp(max(fwd_lrs))
+  if (t > 1) {
+    bwd_data <- data[1:(t-1)]
+    bwd_lrs <- cumsum(rev(dnorm(bwd_data, mu_val, 1, log = TRUE) - dnorm(bwd_data, -mu_val, 1, log = TRUE)))
+    S_max <- exp(max(bwd_lrs))
+  } else { S_max <- 0 }
+  return(max(R_max, S_max))
+}
+
+# --- 3. Simulation Wrapper ---
+# This function handles a single run and returns stats + plot data
+run_adaptive_sim <- function(obs, tau, d, mu_val, alpha, N_sims) {
+  
+  data_at_tau <- obs[1:tau]
   null_stops <- replicate(N_sims, {
-    Tn <- 0; i <- 0
-    while(Tn < A && i < (tau_stop + 1)) {
-      i <- i + 1
-      Tn <- max(0, Tn + rnorm(1, -theta_1, 1)) 
-    }
-    i
+    s <- run_cusum(rnorm(tau + 2, -mu_val, 1), d)
+    ifelse(is.na(s), tau + 2, s)
   })
   
-  adapt_set <- c()
-  for (t in 1:tau_stop) {
-    # Strictly positive rt estimator 
+  univ_set <- c()
+  
+  for (t in 1:tau) {
     rt <- (1 + sum(null_stops >= t)) / (N_sims + 1)
-    
-    # Mt calculation (Equation 9) 
-    fwd_data <- obs[t:tau_stop]
-    # Log-space sum to prevent overflow, then exp 
-    log_fwd <- cumsum(-2 * theta_1 * fwd_data)
-    max_fwd <- exp((max(log_fwd)))
-    
-    max_bwd <- 0
-    if (t > 1) {
-      bwd_data <- obs[1:(t-1)]
-      log_bwd <- cumsum(rev(2 * theta_1 * bwd_data))
-      max_bwd <- exp(max(log_bwd))
-    }
-    mt_obs <- max(max_fwd, max_bwd)
-    
-    # Simulation-based quantile 
-    m_t_sims <- replicate(50, {
-      sim_obs <- c(rnorm(t - 1, -theta_1, 1), rnorm(300, theta_1, 1))
-      Tn_sim <- 0; tau_sim <- 0
-      for (k in 1:length(sim_obs)) {
-        Tn_sim <- max(0, Tn_sim + sim_obs[k])
-        if (Tn_sim >= A) { tau_sim <- k; break }
-      }
-      if (tau_sim < t) return(0)
-      
-      sim_seg <- sim_obs[1:tau_sim]
-      s_fwd <- exp(max(cumsum(-2 * theta_1 * sim_seg[t:tau_sim])))
-      s_bwd <- if(t > 1) exp(max(cumsum(rev(2 * theta_1 * sim_seg[1:(t-1)])))) else 0
-      max(s_fwd, s_bwd)
-    })
-    
-    # Avoid NA/NaN in quantile 
-    if (mt_obs <= quantile(c(mt_obs,m_t_sims),  1 - alpha* rt, na.rm = TRUE)) {
-      adapt_set <- c(adapt_set, t)
-    }
+    mt <- calc_Mt(data_at_tau, t, tau, mu_val)
+    if (mt < 2 / (alpha * rt)) univ_set <- c(univ_set, t)
   }
-  return(adapt_set)
+  return(univ_set)
 }
 
-# --- 3. Parallel Comparison Runner ---
-run_table8_expt <- function(T_true, mu_val, iter = 100) {
+run_table7_expt <- function(T_true, mu_val, alpha, iter = 100) {
   d <- if(mu_val == 0.25) 8.59 else 7.56 # Thresholds from Page 35
   mu_pre <- -mu_val
   
@@ -88,7 +57,7 @@ run_table8_expt <- function(T_true, mu_val, iter = 100) {
             .export = c("get_wu_ci", "run_adaptive_ci")) %dopar% {
               
               # Generate Setting I Data 
-              obs <- c(rnorm(T_true, mu_pre, 1), rnorm(500, mu_val, 1))
+              obs <- c(rnorm(T_true-1, mu_pre, 1), rnorm(500, mu_val, 1))
               
               # CUSUM Detector
               Tn <- 0; tau <- 0
@@ -97,12 +66,12 @@ run_table8_expt <- function(T_true, mu_val, iter = 100) {
                 if (Tn >= d) { tau <- k; break }
               }
               
-              # Requirement: Conditional on tau >= T 
-              if (tau < T_true) return(NULL) 
+              # CONDITIONAL REQUIREMENT: Discard iterations where tau < T or tau is NA
+              if (tau < T_true || tau == 0) return(NULL)
               
               # Apply both methods to same data
-              wu_ci <- get_wu_ci(obs, tau, mu_val, 0.05)
-              our_ci <- run_adaptive_ci(obs, tau, d, mu_val, 0.05, 100)
+              wu_ci <- get_wu_ci(obs, tau, mu_val, alpha)
+              our_ci <- run_adaptive_ci(obs, tau, d, mu_val, alpha, 100)
               
               data.frame(
                 T_val = T_true,
@@ -117,7 +86,7 @@ run_table8_expt <- function(T_true, mu_val, iter = 100) {
 }
 
 # --- 4. Final Summary ---
-res_100 <- run_table8_expt(100, 0.25, iter = 500)
+res_100 <- run_table7_expt(100, 0.25, 0.1, iter = 500)
 print("--- TABLE 7 REPRODUCTION (T=100) ---")
 print(res_100 %>% summarise(
   Our_Cond_Coverage = mean(Our_Cov), 
@@ -126,8 +95,8 @@ print(res_100 %>% summarise(
   Wu_Size = mean(Wu_Size)            
 ))
 
-res_500 <- run_table8_expt(500, 0.25, iter = 200)
-print("--- TABLE 7 REPRODUCTION (T=100) ---")
+res_500 <- run_table7_expt(500, 0.25, 0.1, iter = 500)
+print("--- TABLE 7 REPRODUCTION (T=500) ---")
 print(res_500 %>% summarise(
   Our_Cond_Coverage = mean(Our_Cov), 
   Wu_Cond_Coverage = mean(Wu_Cov),  
@@ -135,7 +104,7 @@ print(res_500 %>% summarise(
   Wu_Size = mean(Wu_Size)            
 ))
 
-res_100 <- run_table8_expt(100, 0.3, iter = 200)
+res_100 <- run_table7_expt(100, 0.3, 0.1, iter = 500)
 print("--- TABLE 7 REPRODUCTION (T=100) ---")
 print(res_100 %>% summarise(
   Our_Cond_Coverage = mean(Our_Cov), 
@@ -144,7 +113,7 @@ print(res_100 %>% summarise(
   Wu_Size = mean(Wu_Size)            
 ))
 
-res_500 <- run_table8_expt(500, 0.3, iter = 200)
+res_500 <- run_table7_expt(500, 0.3, 0.1, iter = 500)
 print("--- TABLE 7 REPRODUCTION (T=100) ---")
 print(res_500 %>% summarise(
   Our_Cond_Coverage = mean(Our_Cov), 
