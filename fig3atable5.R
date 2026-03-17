@@ -23,7 +23,7 @@ run_e_detector_V <-function(data, threshold) {
 calc_Mt_V <- function(data, t, tau) {
   if (t > tau) return(-Inf)
   
-  # Forward t-delay e-process (R_n): lambda_i = max(0.75, mean_past) [cite: 187, 614]
+  # Forward t-delay e-process (R_n): lambda_i = max(0.75, mean_past) 
   fwd_data <- data[t:tau]
   log_R_t <- 0
   if (length(fwd_data) > 1) {
@@ -33,7 +33,7 @@ calc_Mt_V <- function(data, t, tau) {
     }
   }
   
-  # Backward t-delay e-process (S_n): mu_i = min(0, mean_future) - 0.75 [cite: 188, 614]
+  # Backward t-delay e-process (S_n): mu_i = min(0, mean_future) - 0.75 \
   log_S_t <- 0
   if (t > 2) { # Ensure segment is long enough for predictable plug-in
     bwd_data <- data[1:(t-1)]
@@ -68,15 +68,15 @@ run_setting5_combined <- function(true_T, iterations, is_viz = FALSE) {
             .packages = c("stats", "dplyr"),
             .export = c("run_e_detector_V", "calc_Mt_V")) %dopar% {
               
-              # True Data: N(1,1) -> U[-1.2, 0.8] [cite: 605]
+              # True Data: N(1,1) -> U[-1.2, 0.8] 
               obs <- c(rnorm(true_T - 1, 1, 1), runif(300, -1.2, 0.8))
               tau <- run_e_detector_V(obs, A)
               print(tau)
-              if (is.na(tau) || tau < true_T) return(NULL) # Conditional on tau >= T [cite: 63]
+              if (is.na(tau) || tau < true_T) return(NULL) # Conditional on tau >= T 
               
               data_tau <- obs[1:tau]
               
-              # Estimate rt* using P0* = N(0.75, 1) (Assumption 1) [cite: 613]
+              # Estimate rt* using P0* = N(0.75, 1) (Assumption 1) 
               null_stops <- replicate(N_sims, {
                 s <- run_e_detector_V(rnorm(tau + 1, 0.75, 1), A)
                 if(is.na(s)) tau + 1 else s
@@ -86,7 +86,7 @@ run_setting5_combined <- function(true_T, iterations, is_viz = FALSE) {
               for (t in 1:tau) {
                 rt_star <- (1 + sum(null_stops >= t)) / (N_sims + 1)
                 mt <- calc_Mt_V(data_tau, t, tau)
-                # Universal threshold check [cite: 271]
+                # Universal threshold check 
                 if (mt < 2 / (alpha * rt_star)) in_ci[t] <- TRUE
               }
               

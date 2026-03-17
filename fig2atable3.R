@@ -53,15 +53,15 @@ run_setting2_expt <- function(true_T, theta_min, alpha_univ, alpha_adapt, beta_a
   results <- tryCatch({
     foreach(i = 1:iterations, .combine = rbind, .packages = c("stats", "dplyr")) %dopar% {
       
-      # 1. Data Generation (Setting I & II parameters) [cite: 524, 549]
+      # 1. Data Generation (Setting I & II parameters) 
       obs <- c(rnorm(true_T - 1, 0, 1), rnorm(400, 1, 1))
       tau <- run_cusum(obs, A) 
       if (is.na(tau) || tau < true_T) return(NULL) 
       
       data_tau <- obs[1:tau]
       
-      # 2. Estimate rt (Unbiased estimator using Monte Carlo) [cite: 214, 222, 225]
-      # Using the (1 + count)/(N + 1) version for strict positivity [cite: 225]
+      # 2. Estimate rt (Unbiased estimator using Monte Carlo) 
+      # Using the (1 + count)/(N + 1) version for strict positivity 
       null_stops <- replicate(N_sims, {
         s <- run_cusum(rnorm(tau + 2, 0, 1), A)
         if(is.na(s)) tau + 2 else s
@@ -69,7 +69,7 @@ run_setting2_expt <- function(true_T, theta_min, alpha_univ, alpha_adapt, beta_a
       
       univ_set <- c(); adapt_set <- c()
       
-      # 3. Candidate Inversion Loop [cite: 152, 313, 316]
+      # 3. Candidate Inversion Loop 
       for (t in 1:tau) {
         rt_val <- (1 + sum(null_stops >= t)) / (N_sims + 1)
         # Safeguard rt_val from being too small
@@ -77,44 +77,43 @@ run_setting2_expt <- function(true_T, theta_min, alpha_univ, alpha_adapt, beta_a
         
         mt_obs <- calc_Mt(data_tau, t, tau, theta_grid, weights, theta_min)
         
-        # --- UNIVERSAL METHOD (Equation 10/14) [cite: 215, 271] ---
+        # --- UNIVERSAL METHOD (Equation 10/14)
         if (!is.na(mt_obs) && mt_obs < 2 / (alpha_univ * rt_val)) {
           univ_set <- c(univ_set, t)
         }
         
-        # --- ADAPTIVE METHOD (Algorithm 2) [cite: 317, 390] ---
-        # a. Build Confidence Sequence (CS) for theta_1 [cite: 355, 359]
+        # --- ADAPTIVE METHOD (Algorithm 2)  ---
+        # a. Build Confidence Sequence (CS) for theta_1
         n_t <- tau - t + 1
         seg_mean <- mean(data_tau[t:tau])
         
-        # Target coverage 1 - beta*rt [cite: 359]
         cs_err <- max(beta_adapt * rt_val, 1e-6) 
         
-        # Howard et al. boundary: nonasymptotic and time-uniform [cite: 355, 356, 785]
+        # Howard et al. boundary: nonasymptotic and time-uniform
         # Radius with numerical safety
         radius <- sqrt( (2 * (n_t + 1) * log(sqrt(n_t + 1) / cs_err)) / max(n_t^2, 1) )
         theta_lower <- max(theta_min, seg_mean - radius)
         
-        # b. Simulate B streams under H_{0,t} [cite: 311, 415]
+        # b. Simulate B streams under H_{0,t} 
         m_t_sims <- replicate(B, {
-          # X_1...X_{t-1} ~ F_theta0, X_t... ~ F_theta_lower [cite: 325, 414]
+          # X_1...X_{t-1} ~ F_theta0, X_t... ~ F_theta_lower 
           sim_obs <- c(rnorm(t - 1, 0, 1), rnorm(250, theta_lower, 1))
           sim_tau <- run_cusum(sim_obs, A)
           
           if (is.na(sim_tau) || sim_tau < t) return(0)
           
-          # Compute Mt for simulated sequence [cite: 312, 339, 416]
+          # Compute Mt for simulated sequence 
           calc_Mt(sim_obs[1:sim_tau], t, sim_tau, theta_grid, weights, theta_min)
         })
         
-        # c. Inversion check using (1 - alpha*rt) quantile [cite: 315, 341, 433]
+        # c. Inversion check using (1 - alpha*rt) quantile 
         q_val <- quantile(m_t_sims, 1 - (alpha_adapt * rt_val), na.rm = TRUE)
         if (!is.na(mt_obs) && mt_obs <= q_val) {
           adapt_set <- c(adapt_set, t)
         }
       }
       
-      # 4. Return results [cite: 530]
+      # 4. Return results 
       if (is_viz) {
         return(data.frame(Time = 1:tau, Data = data_tau, In_CI = (1:tau) %in% univ_set, Run = i))
       } else {

@@ -37,9 +37,9 @@ run_adaptive_ci <- function(obs, tau_stop, A, theta_1, alpha, N_sims) {
     # Strictly positive rt estimator 
     rt <- (1 + sum(null_stops >= t)) / (N_sims + 1)
     
-    # Mt calculation (Equation 9) [cite: 201]
+    # Mt calculation (Equation 9) 
     fwd_data <- obs[t:tau_stop]
-    # Log-space sum to prevent overflow, then exp [cite: 187]
+    # Log-space sum to prevent overflow, then exp 
     log_fwd <- cumsum(-2 * theta_1 * fwd_data)
     max_fwd <- exp((max(log_fwd)))
     
@@ -51,7 +51,7 @@ run_adaptive_ci <- function(obs, tau_stop, A, theta_1, alpha, N_sims) {
     }
     mt_obs <- max(max_fwd, max_bwd)
     
-    # Simulation-based quantile [cite: 315]
+    # Simulation-based quantile 
     m_t_sims <- replicate(50, {
       sim_obs <- c(rnorm(t - 1, -theta_1, 1), rnorm(300, theta_1, 1))
       Tn_sim <- 0; tau_sim <- 0
@@ -87,10 +87,10 @@ run_table8_expt <- function(T_true, mu_val, iter = 100) {
     foreach(i = 1:iter, .combine = rbind, .packages = c("stats", "dplyr"),
             .export = c("get_wu_ci", "run_adaptive_ci")) %dopar% {
               
-              # Generate Setting I Data [cite: 524]
+              # Generate Setting I Data 
               obs <- c(rnorm(T_true, mu_pre, 1), rnorm(500, mu_val, 1))
               
-              # CUSUM Detector [cite: 670]
+              # CUSUM Detector
               Tn <- 0; tau <- 0
               for (k in 1:length(obs)) {
                 Tn <- max(0, Tn + obs[k])
@@ -118,7 +118,7 @@ run_table8_expt <- function(T_true, mu_val, iter = 100) {
 
 # --- 4. Final Summary ---
 res_100 <- run_table8_expt(100, 0.25, iter = 500)
-print("--- TABLE 8 REPRODUCTION (T=100) ---")
+print("--- TABLE 7 REPRODUCTION (T=100) ---")
 print(res_100 %>% summarise(
   Our_Cond_Coverage = mean(Our_Cov), 
   Wu_Cond_Coverage = mean(Wu_Cov),  
@@ -127,7 +127,7 @@ print(res_100 %>% summarise(
 ))
 
 res_500 <- run_table8_expt(500, 0.25, iter = 200)
-print("--- TABLE 8 REPRODUCTION (T=100) ---")
+print("--- TABLE 7 REPRODUCTION (T=100) ---")
 print(res_500 %>% summarise(
   Our_Cond_Coverage = mean(Our_Cov), 
   Wu_Cond_Coverage = mean(Wu_Cov),  
@@ -136,7 +136,7 @@ print(res_500 %>% summarise(
 ))
 
 res_100 <- run_table8_expt(100, 0.3, iter = 200)
-print("--- TABLE 8 REPRODUCTION (T=100) ---")
+print("--- TABLE 7 REPRODUCTION (T=100) ---")
 print(res_100 %>% summarise(
   Our_Cond_Coverage = mean(Our_Cov), 
   Wu_Cond_Coverage = mean(Wu_Cov),  
@@ -145,7 +145,7 @@ print(res_100 %>% summarise(
 ))
 
 res_500 <- run_table8_expt(500, 0.3, iter = 200)
-print("--- TABLE 8 REPRODUCTION (T=100) ---")
+print("--- TABLE 7 REPRODUCTION (T=100) ---")
 print(res_500 %>% summarise(
   Our_Cond_Coverage = mean(Our_Cov), 
   Wu_Cond_Coverage = mean(Wu_Cov),  

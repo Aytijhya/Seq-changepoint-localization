@@ -5,30 +5,30 @@ library(doParallel)
 
 # --- 1. Parameter Setup ---
 
-alpha_univ <- 0.1     # Target for Setting III Universal [cite: 573]
-alpha_adapt <- 0.05   # Adaptive alpha [cite: 573]
-beta_adapt <- 0.025   # Adaptive beta [cite: 573]
-gamma_adapt <- 0.025  # Adaptive gamma [cite: 573]
-A <- 1000             # Detection Threshold [cite: 572]
-B <- 100              # Adaptive simulations [cite: 573]
-N_sims <- 50         # rt estimation simulations [cite: 573]
-iterations <- 100     # For Table 4 [cite: 577]
+alpha_univ <- 0.1     # Target for Setting III Universal 
+alpha_adapt <- 0.05   # Adaptive alpha
+beta_adapt <- 0.025   # Adaptive beta 
+gamma_adapt <- 0.025  # Adaptive gamma 
+A <- 1000             # Detection Threshold
+B <- 100              # Adaptive simulations 
+N_sims <- 50         # rt estimation simulations 
+iterations <- 100     # For Table 4 
 
-# Weight setup for Theta1 as in Setting II [cite: 572, 575]
+# Weight setup for Theta1 as in Setting II 
 theta_grid_post <- seq(0.9, 0.9 + 9 * 0.2, by = 0.2) 
 w_post <- c(exp(-(0:8)/2) - exp(-(1:9)/2), exp(-4.5))
 
-# Weight setup for Theta0 (Pre-change) [cite: 574, 575]
+# Weight setup for Theta0 (Pre-change) 
 theta_grid_pre <- seq(0.1, 0.1 - 9 * 0.2, by = -0.2)
 w_pre <- c(exp(-(0:8)/2) - exp(-(1:9)/2), exp(-4.5))
 
 # --- 2. Core Functions ---
 
-# Weighted CUSUM-type detector (Equation 23) [cite: 569]
+# Weighted CUSUM-type detector (Equation 23) 
 run_wcusum_composite <- function(data, threshold, grid_post, weights_post, theta0_star) {
   S <- numeric(length(grid_post))
   for (j in seq_along(data)) {
-    # LR of P1(theta) vs P0(theta0_star) [cite: 569]
+    # LR of P1(theta) vs P0(theta0_star) 
     lr_inc <- dnorm(data[j], grid_post, 1, log = TRUE) - dnorm(data[j], theta0_star, 1, log = TRUE)
     S <- pmax(0, S + lr_inc)
     if (sum(exp(S) * weights_post) >= threshold) return(j)
@@ -36,17 +36,17 @@ run_wcusum_composite <- function(data, threshold, grid_post, weights_post, theta
   return(NA)
 }
 
-# Universal Test Statistic Mt for Setting III [cite: 574, 575]
+# Universal Test Statistic Mt for Setting III
 calc_Mt_setting3 <- function(data, t, tau, grid_pre, w_pre, grid_post, w_post, theta0_star, theta1_star) {
   if (t > tau) return(-Inf)
   
-  # Forward Segment (t to tau): Mixture over Theta0 vs Theta1_star [cite: 574]
+  # Forward Segment (t to tau): Mixture over Theta0 vs Theta1_star
   fwd_data <- data[t:tau]
   R_t <- sum(sapply(seq_along(grid_pre), function(i) {
     exp(max(cumsum(dnorm(fwd_data, grid_pre[i], 1, log = TRUE) - dnorm(fwd_data, theta1_star, 1, log = TRUE)))) * w_pre[i]
   }))
   
-  # Backward Segment (1 to t-1): Mixture over Theta1 vs Theta0_star [cite: 575]
+  # Backward Segment (1 to t-1): Mixture over Theta1 vs Theta0_star
   if (t > 1) {
     bwd_data <- data[1:(t-1)]
     S_t <- sum(sapply(seq_along(grid_post), function(i) {
@@ -60,14 +60,14 @@ calc_Mt_setting3 <- function(data, t, tau, grid_pre, w_pre, grid_post, w_post, t
 # --- 3. Experiment Runner ---
 
 run_setting3_expt <- function(true_T, theta0_star, theta1_star, is_viz = FALSE) {
-  # Generate true data: N(0,1) then N(1,1) [cite: 564]
+  # Generate true data: N(0,1) then N(1,1) 
   obs <- c(rnorm(true_T - 1, 0, 1), rnorm(400, 1, 1))
   tau <- run_wcusum_composite(obs, A, theta_grid_post, w_post, theta0_star)
   if (is.na(tau) || tau < true_T) return(NULL)
   
   data_tau <- obs[1:tau]
   
-  # rt* estimation under H0 (using closest element theta0_star) [cite: 463, 475]
+  # rt* estimation under H0 (using closest element theta0_star)
   null_stops <- replicate(N_sims, {
     s <- run_wcusum_composite(rnorm(tau + 200, theta0_star, 1), A, theta_grid_post, w_post, theta0_star)
     if(is.na(s)) tau + 200 else s
@@ -82,13 +82,13 @@ run_setting3_expt <- function(true_T, theta0_star, theta1_star, is_viz = FALSE) 
     # 1. Universal Method (Equation 14) 
     if (mt_obs < 2 / (alpha_univ * rt_star)) univ_set <- c(univ_set, t)
     
-    # 2. Adaptive Method (Algorithm 3) [cite: 448, 456]
-    # In practice, discretized CS is used [cite: 452]
+    # 2. Adaptive Method (Algorithm 3)
+    # In practice, discretized CS is used 
     # Optimization: Check boundary elements
     cs_err_post <- beta_adapt * rt_star
     cs_err_pre <- gamma_adapt * rt_star
     
-    # Simple CS bounds [cite: 354]
+    # Simple CS bounds 
     n_post <- tau - t + 1; n_pre <- t - 1
     post_mu <- mean(data_tau[t:tau]); pre_mu <- if(t > 1) mean(data_tau[1:(t-1)]) else 0
     rad_post <- sqrt(2 * log(1/cs_err_post) / max(n_post, 1))
@@ -119,7 +119,7 @@ run_setting3_expt <- function(true_T, theta0_star, theta1_star, is_viz = FALSE) 
 
 # --- 4. Execution ---
 
-# Parallel setup for Table 4 [cite: 577]
+# Parallel setup for Table 4 
 cl <- makeCluster(parallel::detectCores()-1); registerDoParallel(cl)
 table_data_3 <- foreach(i = 1:iterations, .combine = rbind, .packages = c("stats", "dplyr")) %dopar% {
   # Using first row params: T=100, Theta0=[0, 0.25], Theta1=[0.75, Inf) 
@@ -155,14 +155,14 @@ final_table_4 <- foreach(conf = configs, .combine = rbind) %do% {
   message(paste("Processing", conf$name))
   
   row_results <- foreach(i = 1:iterations, .combine = rbind, .packages = c("stats", "dplyr")) %dopar% {
-    # Calls the primary experiment function for Setting III [cite: 448, 456, 501]
+    # Calls the primary experiment function for Setting III 
     # Ensure the run_setting3_expt function is defined in the global environment
     run_setting3_expt(true_T = conf$T, 
                       theta0_star = conf$theta0_star, 
                       theta1_star = conf$theta1_star)
   }
   
-  # Summarize the 500 runs for this specific configuration [cite: 577]
+  # Summarize the 500 runs for this specific configuration 
   row_results %>%
     summarise(
       T = conf$T,
@@ -171,7 +171,7 @@ final_table_4 <- foreach(conf = configs, .combine = rbind) %do% {
       Univ_Coverage = mean(Univ_Cov), # Target ~0.9 
       Adapt_Coverage = mean(Adapt_Cov),
       Univ_Size = mean(Univ_Sz),
-      Adapt_Size = mean(Adapt_Sz), # Typically smaller than Universal [cite: 752]
+      Adapt_Size = mean(Adapt_Sz), # Typically smaller than Universal 
       Avg_Abs_Dev = mean(T_hat_error),
       Avg_Delay = mean(Delay)
     )
@@ -184,9 +184,9 @@ print("--- TABLE 4 REPRODUCTION: SETTING III (ALL ROWS) ---")
 # Column names match the paper's metrics 
 print(final_table_4)
 
-# Figure 2(b) Visualization [cite: 577, 581]
+# Figure 2(b) Visualization
 viz_runs_3 <- bind_rows(lapply(1:5, function(i) {
-  d <- run_setting3_expt(100, 0.1, 0.9, is_viz = TRUE) # Params for Fig 2b [cite: 593]
+  d <- run_setting3_expt(100, 0.1, 0.9, is_viz = TRUE) # Params for Fig 2b 
   d$Run <- paste("Run", i); d
 }))
 

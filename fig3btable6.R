@@ -97,7 +97,7 @@ run_setting6_combined <- function(true_T, eps, iterations = 200, is_viz = FALSE)
             .packages = c("stats", "dplyr"),
             .export = c("run_huber_detector", "calc_Mt_robust")) %dopar% {
               
-              # Data Generation: epsilon-contamination with Cauchy noise (Source: Page 34)
+              # Data Generation: epsilon-contamination with Cauchy noise 
               # P0 = (1-eps)N(0,1) + eps*Cauchy(-1,10)
               # P1 = (1-eps)N(1,1) + eps*Cauchy(-1,10)
               n_total <- true_T + 200
@@ -143,22 +143,22 @@ run_setting6_combined <- function(true_T, eps, iterations = 200, is_viz = FALSE)
 
 # --- 3. Execution & Summary ---
 
-# Table 7 Reproduction (Source: Page 35)
-cat("Simulating Table 7 (Setting VI)...\n")
+# TABLE 6 Reproduction 
+cat("Simulating TABLE 6 (Setting VI)...\n")
 res_100_01 <- run_setting6_combined(100, 0.01, iterations = 500)
-print("--- TABLE 7 PARTIAL REPRODUCTION (T=100, Eps=0.01) ---")
+
 print(res_100_01 %>% summarise(T=100, Eps=0.01, Coverage=mean(Covered), Size=mean(Size), Delay=mean(Delay)))
 
 res_500_01 <- run_setting6_combined(500, 0.01, iterations = 500)
-print("--- TABLE 7 PARTIAL REPRODUCTION (T=500, Eps=0.01) ---")
+
 print(res_500_01 %>% summarise(T=500, Eps=0.01, Coverage=mean(Covered), Size=mean(Size), Delay=mean(Delay)))
 
 res_100_001 <- run_setting6_combined(100, 0.001, iterations = 500)
-print("--- TABLE 7 PARTIAL REPRODUCTION (T=100, Eps=0.001) ---")
+
 print(res_100_001 %>% summarise(T=100, Eps=0.001, Coverage=mean(Covered), Size=mean(Size), Delay=mean(Delay)))
 
 res_500_001 <- run_setting6_combined(500, 0.001, iterations = 500)
-print("--- TABLE 7 PARTIAL REPRODUCTION (T=500, Eps=0.001) ---")
+
 print(res_500_001 %>% summarise(T=500, Eps=0.001, Coverage=mean(Covered), Size=mean(Size), Delay=mean(Delay)))
 
 cat("\nGenerating Robust Visualization...\n")

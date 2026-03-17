@@ -15,7 +15,7 @@ iterations <- 500
 
 # --- 2. Core Logic Functions ---
 
-# CUSUM Detector [cite: 526]
+# CUSUM Detector 
 run_cusum <- function(data, threshold) {
   S <- 0
   for (i in seq_along(data)) {
@@ -26,7 +26,7 @@ run_cusum <- function(data, threshold) {
   return(NA)
 }
 
-# Universal Test Statistic Mt (Equation 9) [cite: 201]
+# Universal Test Statistic Mt (Equation 9) 
 calc_Mt <- function(data, t, tau) {
   if (t > tau) return(-Inf)
   fwd_data <- data[t:tau]
