@@ -122,7 +122,7 @@ run_setting3_expt <- function(true_T, theta0_star, theta1_star, alpha_univ, alph
 
 # Parallel setup for Table 4 
 cl <- makeCluster(parallel::detectCores()-1); registerDoParallel(cl)
-table_data_3 <- foreach(i = 1:iterations, .combine = rbind, .packages = c("stats", "dplyr")) %dopar% {
+table_data_4 <- foreach(i = 1:iterations, .combine = rbind, .packages = c("stats", "dplyr")) %dopar% {
   # Using first row params: T=100, Theta0=[0, 0.25], Theta1=[0.75, Inf) 
   run_setting3_expt(100, 0.25, 0.75, 0.1,0.05,0.025,0.025)
 }
@@ -130,11 +130,29 @@ stopCluster(cl)
 
 # Summary Output for Table 4 
 print("--- TABLE 4 REPRODUCTION: SETTING III (T=100) ---")
-table_3_summary <- table_data_3 %>% 
+table_4_summary <- table_data_4 %>% 
   summarise(Univ_Coverage = mean(Univ_Cov), Adapt_Coverage = mean(Adapt_Cov),
             Univ_Size = mean(Univ_Sz), Adapt_Size = mean(Adapt_Sz), 
             Avg_Abs_Dev = mean(T_hat_error), Avg_Delay = mean(Delay))
-print(table_3_summary)
+print(table_4_summary)
+
+###
+
+l <- makeCluster(parallel::detectCores()-1); registerDoParallel(cl)
+table_data_4 <- foreach(i = 1:iterations, .combine = rbind, .packages = c("stats", "dplyr")) %dopar% {
+  # Using first row params: T=100, Theta0=[0, 0.25], Theta1=[0.75, Inf) 
+  run_setting3_expt(100, 0.1, 0.9, 0.1,0.05,0.025,0.025)
+}
+stopCluster(cl)
+
+# Summary Output for Table 4 
+print("--- TABLE 4 REPRODUCTION: SETTING III (T=100) ---")
+table_4_summary <- table_data_4 %>% 
+  summarise(Univ_Coverage = mean(Univ_Cov), Adapt_Coverage = mean(Adapt_Cov),
+            Univ_Size = mean(Univ_Sz), Adapt_Size = mean(Adapt_Sz), 
+            Avg_Abs_Dev = mean(T_hat_error), Avg_Delay = mean(Delay))
+print(table_4_summary)
+
 
 # --- Define the Parameter Configurations for Table 4 ---
 # Based on the specifications in Table 4 
@@ -186,16 +204,16 @@ print("--- TABLE 4 REPRODUCTION: SETTING III (ALL ROWS) ---")
 print(final_table_4)
 
 # Figure 2(b) Visualization
-viz_runs_3 <- bind_rows(lapply(1:5, function(i) {
+viz_runs_4 <- bind_rows(lapply(1:5, function(i) {
   d <- run_setting3_expt(100, 0.1, 0.9, is_viz = TRUE) # Params for Fig 2b 
   d$Run <- paste("Run", i); d
 }))
 
 
-p=ggplot(viz_runs_3, aes(x = Time, y = Data)) +
+p=ggplot(viz_runs_4, aes(x = Time, y = Data)) +
   geom_point(size = 1) +
   geom_vline(xintercept = 100, color = "black", size = 1) + # True T
-  geom_point(data = subset(viz_runs_3, In_CI), aes(x = Time, y = 0), color = "red", shape = 16, size = 1.5) +
+  geom_point(data = subset(viz_runs_4, In_CI), aes(x = Time, y = 0), color = "red", shape = 16, size = 1.5) +
   facet_wrap(~Run, ncol = 1, scales = "fixed") +
   theme_minimal() +
   theme(panel.grid.minor = element_blank(), strip.text = element_blank()) +
