@@ -12,7 +12,7 @@ gamma_adapt <- 0.025  # Adaptive gamma
 A <- 1000             # Detection Threshold
 B <- 100              # Adaptive simulations 
 N_sims <- 50         # rt estimation simulations 
-iterations <- 100     # For Table 4 
+iterations <- 500     # For Table 4 
 
 # Weight setup for Theta1 as in Setting II 
 theta_grid_post <- seq(0.9, 0.9 + 9 * 0.2, by = 0.2) 
@@ -59,7 +59,7 @@ calc_Mt_setting3 <- function(data, t, tau, grid_pre, w_pre, grid_post, w_post, t
 
 # --- 3. Experiment Runner ---
 
-run_setting3_expt <- function(true_T, theta0_star, theta1_star, is_viz = FALSE) {
+run_setting3_expt <- function(true_T, theta0_star, theta1_star, alpha_univ, alpha_adapt, beta_adapt, gamma_adapt, is_viz = FALSE) {
   # Generate true data: N(0,1) then N(1,1) 
   obs <- c(rnorm(true_T - 1, 0, 1), rnorm(400, 1, 1))
   tau <- run_wcusum_composite(obs, A, theta_grid_post, w_post, theta0_star)
@@ -69,8 +69,8 @@ run_setting3_expt <- function(true_T, theta0_star, theta1_star, is_viz = FALSE) 
   
   # rt* estimation under H0 (using closest element theta0_star)
   null_stops <- replicate(N_sims, {
-    s <- run_wcusum_composite(rnorm(tau + 200, theta0_star, 1), A, theta_grid_post, w_post, theta0_star)
-    if(is.na(s)) tau + 200 else s
+    s <- run_wcusum_composite(rnorm(tau + 2, theta0_star, 1), A, theta_grid_post, w_post, theta0_star)
+    if(is.na(s)) tau + 2 else s
   })
   
   univ_set <- c(); adapt_set <- c()
@@ -89,10 +89,11 @@ run_setting3_expt <- function(true_T, theta0_star, theta1_star, is_viz = FALSE) 
     cs_err_pre <- gamma_adapt * rt_star
     
     # Simple CS bounds 
-    n_post <- tau - t + 1; n_pre <- t - 1
+    n_post <- tau - t + 1
+    n_pre <- t - 1
     post_mu <- mean(data_tau[t:tau]); pre_mu <- if(t > 1) mean(data_tau[1:(t-1)]) else 0
-    rad_post <- sqrt(2 * log(1/cs_err_post) / max(n_post, 1))
-    rad_pre <- sqrt(2 * log(1/cs_err_pre) / max(n_pre, 1))
+    rad_post <- sqrt((log(log(2*n_post)) + 0.72 * log(10.4 / cs_err_post)) / max(n_post, 1) )
+    rad_pre <- qnorm(1-cs_err_pre/2)/sqrt( max(n_pre, 1))
     
     theta_post_bound <- max(theta1_star, post_mu - rad_post)
     theta_pre_bound <- min(theta0_star, pre_mu + rad_pre)
@@ -123,7 +124,7 @@ run_setting3_expt <- function(true_T, theta0_star, theta1_star, is_viz = FALSE) 
 cl <- makeCluster(parallel::detectCores()-1); registerDoParallel(cl)
 table_data_3 <- foreach(i = 1:iterations, .combine = rbind, .packages = c("stats", "dplyr")) %dopar% {
   # Using first row params: T=100, Theta0=[0, 0.25], Theta1=[0.75, Inf) 
-  run_setting3_expt(100, 0.25, 0.75)
+  run_setting3_expt(100, 0.25, 0.75, 0.1,0.05,0.025,0.025)
 }
 stopCluster(cl)
 

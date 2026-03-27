@@ -7,7 +7,7 @@ library(doParallel)
 
 # --- 1. Core Experiment Function ---
 
-run_setting2_expt <- function(true_T, theta_min, alpha_univ, alpha_adapt, beta_adapt, iterations, is_viz = FALSE) {
+run_setting2_expt <- function(true_T, theta_min,  alpha_adapt, alpha_univ, beta_adapt, iterations, is_viz = FALSE) {
   
   # Parameters for Weighted CUSUM
   A <- 1000
@@ -91,7 +91,7 @@ run_setting2_expt <- function(true_T, theta_min, alpha_univ, alpha_adapt, beta_a
         
         # Howard et al. boundary: nonasymptotic and time-uniform
         # Radius with numerical safety
-        radius <- sqrt( (2 * (n_t + 1) * log(sqrt(n_t + 1) / cs_err)) / max(n_t^2, 1) )
+        radius <- sqrt((log(log(2*n_t)) + 0.72 * log(10.4 / cs_err)) / max(n_t, 1) )
         theta_lower <- max(theta_min, seg_mean - radius)
         
         # b. Simulate B streams under H_{0,t} 
